@@ -13,34 +13,87 @@ export async function POST(request) {
     const contactsCollection = db.collection("contacts")
 
     let savedCount = 0
+    const total = contacts.length
 
-    for (const contact of contacts) {
-      try {
-        // Check if contact already exists (by email or phone)
-        const existingContact = await contactsCollection.findOne({
-          $or: [
-            { email: contact.email, email: { $ne: "" } },
-            { phone: contact.phone, phone: { $ne: "" } },
-          ],
-        })
+    // Create a readable stream for progress updates
+    const encoder = new TextEncoder()
+    const stream = new ReadableStream({
+      async start(controller) {
+        try {
+          // Process contacts in batches of 10 for better performance
+          const batchSize = 10
 
-        if (!existingContact) {
-          await contactsCollection.insertOne({
-            ...contact,
-            createdAt: new Date(),
-            updatedAt: new Date(),
-          })
-          savedCount++
+          for (let i = 0; i < contacts.length; i += batchSize) {
+            const batch = contacts.slice(i, i + batchSize)
+
+            // Process each contact in the batch
+            for (const contact of batch) {
+              try {
+                // Check if contact already exists (by email, phone, or memberId)
+                const existingContact = await contactsCollection.findOne({
+                  $or: [
+                    { email: contact.email, email: { $ne: "" } },
+                    { phone: contact.phone, phone: { $ne: "" } },
+                    { memberId: contact.memberId },
+                  ],
+                })
+
+                if (!existingContact) {
+                  await contactsCollection.insertOne({
+                    ...contact,
+                    createdAt: new Date(),
+                    updatedAt: new Date(),
+                  })
+                  savedCount++
+                }
+
+                // Send progress update
+                const progressData =
+                  JSON.stringify({
+                    progress: {
+                      current: Math.min(i + batch.indexOf(contact) + 1, total),
+                      total: total,
+                    },
+                  }) + "\n"
+
+                controller.enqueue(encoder.encode(progressData))
+              } catch (error) {
+                console.error("Error inserting contact:", error)
+              }
+            }
+
+            // Small delay to prevent overwhelming the database
+            await new Promise((resolve) => setTimeout(resolve, 100))
+          }
+
+          // Send completion message
+          const completionData =
+            JSON.stringify({
+              completed: true,
+              saved: savedCount,
+              total: total,
+            }) + "\n"
+
+          controller.enqueue(encoder.encode(completionData))
+          controller.close()
+        } catch (error) {
+          console.error("Bulk create error:", error)
+          const errorData =
+            JSON.stringify({
+              error: "Failed to save contacts",
+              details: error.message,
+            }) + "\n"
+          controller.enqueue(encoder.encode(errorData))
+          controller.close()
         }
-      } catch (error) {
-        console.error("Error inserting contact:", error)
-      }
-    }
+      },
+    })
 
-    return NextResponse.json({
-      success: true,
-      saved: savedCount,
-      total: contacts.length,
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "application/json",
+        "Transfer-Encoding": "chunked",
+      },
     })
   } catch (error) {
     console.error("Bulk create error:", error)

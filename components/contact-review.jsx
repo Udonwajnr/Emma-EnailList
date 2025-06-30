@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Progress } from "@/components/ui/progress";
 import {
   User,
   Mail,
@@ -30,6 +31,7 @@ export function ContactReview({ contacts, onSave, onBack }) {
   );
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState(null);
+  const [saveProgress, setSaveProgress] = useState({ current: 0, total: 0 });
 
   const updateContact = (id, field, value) => {
     setReviewContacts((prev) =>
@@ -83,6 +85,7 @@ export function ContactReview({ contacts, onSave, onBack }) {
 
     setSaving(true);
     setMessage(null);
+    setSaveProgress({ current: 0, total: selectedContacts.length });
 
     try {
       const response = await fetch("/api/contacts/bulk-create", {
@@ -101,15 +104,43 @@ export function ContactReview({ contacts, onSave, onBack }) {
         throw new Error("Failed to save contacts");
       }
 
-      const result = await response.json();
-      setMessage({
-        type: "success",
-        text: `Successfully saved ${result.saved} contacts to database`,
-      });
+      // Read the response as a stream to get progress updates
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
 
-      setTimeout(() => {
-        onSave();
-      }, 1500);
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop(); // Keep incomplete line in buffer
+
+        for (const line of lines) {
+          if (line.trim()) {
+            try {
+              const data = JSON.parse(line);
+              if (data.progress) {
+                setSaveProgress({
+                  current: data.progress.current,
+                  total: data.progress.total,
+                });
+              } else if (data.completed) {
+                setMessage({
+                  type: "success",
+                  text: `Successfully saved ${data.saved} out of ${data.total} contacts to database`,
+                });
+                setTimeout(() => {
+                  onSave();
+                }, 2000);
+              }
+            } catch (e) {
+              // Ignore JSON parse errors for incomplete chunks
+            }
+          }
+        }
+      }
     } catch (error) {
       setMessage({
         type: "error",
@@ -117,6 +148,7 @@ export function ContactReview({ contacts, onSave, onBack }) {
       });
     } finally {
       setSaving(false);
+      setSaveProgress({ current: 0, total: 0 });
     }
   };
 
@@ -159,9 +191,29 @@ export function ContactReview({ contacts, onSave, onBack }) {
         </div>
       </div>
 
+      {/* Progress Bar */}
+      {saving && saveProgress.total > 0 && (
+        <Card>
+          <CardContent className="p-4">
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm">
+                <span>Saving contacts to database...</span>
+                <span>
+                  {saveProgress.current} of {saveProgress.total}
+                </span>
+              </div>
+              <Progress
+                value={(saveProgress.current / saveProgress.total) * 100}
+                className="w-full"
+              />
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Contacts Grid */}
-      <div className="grid gap-4">
-        {reviewContacts.map((contact) => (
+      <div className="grid gap-4 max-h-96 overflow-y-auto">
+        {reviewContacts.slice(0, 50).map((contact) => (
           <Card
             key={contact.id}
             className={`transition-all ${
@@ -176,7 +228,7 @@ export function ContactReview({ contacts, onSave, onBack }) {
                     onCheckedChange={() => toggleSelect(contact.id)}
                   />
                   <CardTitle className="text-lg">
-                    Contact #{contact.id + 1}
+                    {contact.memberId} - Contact #{contact.id + 1}
                   </CardTitle>
                 </div>
                 <div className="flex items-center gap-2">
@@ -260,7 +312,7 @@ export function ContactReview({ contacts, onSave, onBack }) {
 
               {/* Validation Badges */}
               <div className="flex gap-2 flex-wrap">
-                {contact.name && (
+                {contact.name && contact.name !== "Unknown" && (
                   <Badge variant="outline" className="text-green-600">
                     Has Name
                   </Badge>
@@ -275,14 +327,27 @@ export function ContactReview({ contacts, onSave, onBack }) {
                     Has Phone
                   </Badge>
                 )}
-                {!contact.name && !contact.email && !contact.phone && (
-                  <Badge variant="destructive">Incomplete</Badge>
-                )}
+                {(!contact.name || contact.name === "Unknown") &&
+                  !contact.email &&
+                  !contact.phone && (
+                    <Badge variant="destructive">Incomplete</Badge>
+                  )}
               </div>
             </CardContent>
           </Card>
         ))}
       </div>
+
+      {reviewContacts.length > 50 && (
+        <Card>
+          <CardContent className="text-center py-4">
+            <p className="text-gray-500">
+              Showing first 50 contacts. Total: {reviewContacts.length} contacts
+              will be processed.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {reviewContacts.length === 0 && (
         <Card>
