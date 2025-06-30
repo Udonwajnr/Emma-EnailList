@@ -1,10 +1,5 @@
 export function extractContactsFromText(text) {
   const contacts = [];
-  const membershipCategories = [
-    "FELLOW",
-    "ASSOCIATE ABOVE 10YRS",
-    "ASSOCIATE BELOW 10YRS",
-  ];
 
   const lines = text
     .split(/\n+/)
@@ -14,7 +9,7 @@ export function extractContactsFromText(text) {
   console.log(`Total lines: ${lines.length}`);
 
   for (let i = 0; i < lines.length; i++) {
-    if (/^(FL|M)\d{5}$/.test(lines[i])) {
+    if (/^FL\d{5}$/.test(lines[i])) {
       const memberId = lines[i];
       let name = "";
       let phone = "";
@@ -29,7 +24,7 @@ export function extractContactsFromText(text) {
         if (
           !name &&
           /^[A-Z\s.'-]{4,}$/.test(lines[j]) &&
-          !membershipCategories.includes(lines[j])
+          lines[j] !== "FELLOW"
         ) {
           name = lines[j];
         } else if (!phone && /^[0-9]{10,11}$/.test(lines[j])) {
